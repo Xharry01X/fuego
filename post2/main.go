@@ -48,50 +48,52 @@ func main() {
 		fuego.WithAddr(":4000"),
 	)
 
-	fuego.Post(s, "/user", func(c *fuego.ContextWithBody[UserInput]) (UserOutput, error) {
-		body, err := c.Body()
-		if err != nil {
-			return UserOutput{}, err
-		}
-
-		// Validate the body
-		err = validate.Struct(body)
-		if err != nil {
-			return UserOutput{}, err
-		}
-
-		// Hash the password
-		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(body.Password), bcrypt.DefaultCost)
-		if err != nil {
-			return UserOutput{}, err
-		}
-
-		// Save user to MongoDB
-		user := bson.D{
-			{Key: "username", Value: body.Username},
-			{Key: "password", Value: string(hashedPassword)},
-		}
-
-		_, err = userCollection.InsertOne(context.TODO(), user)
-		if err != nil {
-			return UserOutput{}, err
-		}
-
-		// Create JWT token
-		token, err := generateJWT(body.Username)
-		if err != nil {
-			return UserOutput{}, err
-		}
-
-		return UserOutput{
-			Username: body.Username,
-			Token:    token,
-		}, nil
-	})
+	fuego.Post(s,"/user",createUserHandler)
+	fuego.Get(s,"/",getAllUser)
 
 	s.Run()
 }
 
+func createUserHandler(c *fuego.ContextWithBody[UserInput]) (UserOutput, error) {
+	body, err := c.Body()
+	if err != nil {
+		return UserOutput{}, err
+	}
+
+	// Validate the body
+	err = validate.Struct(body)
+	if err != nil {
+		return UserOutput{}, err
+	}
+
+	// Hash the password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(body.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return UserOutput{}, err
+	}
+
+	// Save user to MongoDB
+	user := bson.D{
+		{Key: "username", Value: body.Username},
+		{Key: "password", Value: string(hashedPassword)},
+	}
+
+	_, err = userCollection.InsertOne(context.TODO(), user)
+	if err != nil {
+		return UserOutput{}, err
+	}
+
+	// Create JWT token
+	token, err := generateJWT(body.Username)
+	if err != nil {
+		return UserOutput{}, err
+	}
+
+	return UserOutput{
+		Username: body.Username,
+		Token:    token,
+	}, nil
+}
 func generateJWT(username string) (string, error) {
 	claims := &jwt.StandardClaims{
 		ExpiresAt: time.Now().Add(time.Hour * 72).Unix(),
@@ -101,3 +103,28 @@ func generateJWT(username string) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(jwtKey)
 }
+
+
+func getAllUser(c *fuego.ContextNoBody) ([]UserOutput, error) {
+	var users []UserOutput
+	cursor, err := userCollection.Find(context.TODO(), bson.D{})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(context.TODO())
+	for cursor.Next(context.TODO()) {
+		var user bson.D
+		err := cursor.Decode(&user)
+		if err != nil {
+			return nil, err
+		}
+		username, _ := user.Map()["username"].(string)
+		token, err := generateJWT(username)
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, UserOutput{Username: username, Token: token})
+	}
+	return users, nil
+}
+
